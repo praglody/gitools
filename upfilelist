@@ -1,0 +1,208 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+@author: zhudeping
+@data 20180323
+
+for git:
+=========================================
+upfilelist author_name [since_time [until_time]]
+
+例：
+upfilelist name 10                    列出最近 10 个修改记录
+upfilelist name 2018-03-01            列出 2018-03-01 之后的所有修改记录
+upfilelist name 2018-03-01 2018-03-22 列出 0301 至 0325 之间的所有修改记录
+=========================================
+
+for svn:
+=========================================
+upfilelist author_name
+upfilelist author_name num
+upfilelist author_name since_num:
+upfilelist author_name since_num:until_num
+
+例：
+upfilelist name             列出最近 50 个版本中用户 name 的修改记录
+upfilelist name 100         列出最近 100 个版本中用户 name 的修改记录
+upfilelist name 6230:       列出从版本号 6230 到最新版本之间用户 name 的修改记录
+upfilelist name 6230:6280   列出从版本号 6230 到 6280 之间用户 name 的修改记录
+
+=========================================
+
+for all：
+=========================================
+upfilelist clean    将工作区所有的修改恢复初始状态
+=========================================
+"""
+import sys
+import os
+
+svn_error_msg = "parameter error！ examples:（ upfilelist name 62805:62900 ）\n"
+git_error_msg = "parameter error！ examples:（ upfilelist author_name [2018-03-05 [2018-03-21]] ）\n"
+svn_help = """
+=================================================================
+upfilelist author_name
+upfilelist author_name num
+upfilelist author_name since_num:
+upfilelist author_name since_num:until_num
+upfilelist clean
+
+例：
+upfilelist name             列出最近 50 个版本中用户 name 的修改记录
+upfilelist name 100         列出最近 100 个版本中用户 name 的修改记录
+upfilelist name 6230:       列出从版本号 6230 到最新版本之间用户 name 的修改记录
+upfilelist name 6230:6280   列出从版本号 6230 到 6280 之间用户 name 的修改记录
+
+upfilelist clean            将工作区所有的修改恢复初始状态
+=================================================================
+"""
+
+git_help = """
+=================================================================
+upfilelist author_name [since_time [until_time]]
+upfilelist clean
+
+例：
+upfilelist name 10                    列出最近 10 个修改记录
+upfilelist name 2018-03-01            列出 2018-03-01 之后的所有修改记录
+upfilelist name 2018-03-01 2018-03-22 列出 0301 至 0325 之间的所有修改记录
+
+upfilelist clean            将工作区所有的修改恢复初始状态
+=================================================================
+"""
+
+
+def svn_func():
+    if len(sys.argv) < 2 :
+        print svn_error_msg
+        exit()
+
+    res = os.popen("svn info | grep Revision").readlines()
+    if len(res):
+        current_version = filter(str.isdigit, res[0])
+    else:
+        res = os.popen("svn info | grep '最后修改的版本'").readlines()
+        if len(res):
+            current_version = filter(str.isdigit, res[0])
+        else:
+            exit("bad svn version")
+    if not isinstance(current_version,int):
+        current_version = int(current_version)
+
+    if len(sys.argv) < 2:
+        exit(svn_error_msg)
+
+    start = current_version - 50
+    end = current_version
+    name = sys.argv[1]
+
+    if len(sys.argv) > 2:
+        start = sys.argv[2]
+        if start.find(":") == 0:                    # :1260
+            exit(svn_error_msg)
+        elif start.rfind(":") == len(start)-1:      # 1260:
+            start = int(start[0:start.find(":")])
+            end = current_version
+            print "显示自 %d 到 %d 版本中你的提交信息：" % (start,end)
+        elif start.find(":") == -1:                 # 50
+            print "显示最近 %s 个版本中你的提交信息：" % start
+            start = current_version - int(start)
+            end = current_version
+        else:                                       # 1260:1360
+            tmp = start.split(":")
+            start = int(tmp[0])
+            end = int(tmp[0])
+            print "显示自 %d 到 %d 版本中你的提交信息：" % (start, end)
+    else:
+        print "【默认】显示最近 %s 个版本中你的提交信息：" % (end - start)
+
+    if (start >= end) or ((end - start) > 1000):
+        print svn_error_msg
+        exit()
+
+    cmd = "svn log -r %d:%d | grep ^r | grep %s | awk '{print $1}'" % (start,end,name)
+
+    res = os.popen(cmd).readlines()
+    if not res:
+        print "empty list\n"
+        exit(git_error_msg)
+
+    files = []
+    for i,v in enumerate(res):
+        print "\n==================================================="
+        cmd = "svn log -r %s -v | grep -v ^-" % v.strip("\n r")
+        os.system(cmd)
+        cmd = "svn log -r %s -q -v | grep \/trunk\/" % v.strip("\n r")
+        file = os.popen(cmd).readlines()
+        for val in file:
+            tmp = val.strip(" \n")
+            tmp = tmp.replace("/trunk","")
+            files.append(tmp)
+
+    files = list(set(files))
+    files.sort()
+    print "\n\n***********  以下是修改的文件的集合  **************"
+    for val in files:
+        print "%s" % val
+    print "修改文件数统计: %d" % len(files)
+    print "当前版本库最新版本为：%d\n" % current_version
+
+
+def git_func():
+    cmd = "git log --pretty=format:'[ %%ad ] %%an %%cn %%s'%s --name-status%s --date=format:'%%F %%H:%%M' |" \
+          " grep -v 'Merge'"
+    files_cmd = "git log --pretty=format:''%s --name-only%s | sort -u | uniq"
+    author = " --author='%s'"
+    since = " -20"
+    argv_len = len(sys.argv)
+
+    if argv_len > 3:
+        since = " --since='%s' --until='%s'" % (sys.argv[2],sys.argv[3])
+    elif argv_len > 2:
+        if sys.argv[2].isdigit():
+            since = " -%s" % (sys.argv[2],)
+        else:
+            since = " --since='%s'" % (sys.argv[2],)
+
+    if argv_len > 1:
+        author = author % (sys.argv[1],)
+    else:
+        exit(git_error_msg)
+
+    cmd = cmd % (since, author)
+    files_cmd = files_cmd % (since, author)
+    os.system(cmd)
+    print "\n***********  以下是修改的文件的集合  **************"
+    os.system(files_cmd)
+    print "\n"
+
+
+if __name__ == "__main__":
+    current_dir = os.getcwd()
+    type = "svn"
+    if os.path.exists("%s/.svn" % current_dir):
+        type = "svn"
+    elif os.path.exists("%s/.git" % current_dir):
+        type = "git"
+    else:
+        exit("this is not a project dir")
+
+    if len(sys.argv) > 1 and sys.argv[1] == "clean":
+        if type == "git":
+            os.system("git add . && git reset --hard HEAD")
+        else:
+            os.system("svn revert -R . && svn st | grep '^?' | awk '{print $2}' | xargs rm -rf")
+        exit("clean the %s dir" % type)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--help":
+        if type == "git":
+            print git_help
+        else:
+            print svn_help
+        exit()
+
+    if type == "git":
+        git_func()
+    else:
+        svn_func()
